@@ -45,20 +45,32 @@ func main() {
 	} else {
 		sslConfig.EnableSSL = false
 	}
-	exporter.ConnectKafka(opts.Kafka.Host, opts.Kafka.Topic, sslConfig)
+
+	saslConfig := &KafkaSASLConfig{}
+	if opts.Kafka.SASLUsername != "" && opts.Kafka.SASLPassword != "" {
+		saslConfig.EnableSASL = true
+		saslConfig.Username = opts.Kafka.SASLUsername
+		saslConfig.Password = opts.Kafka.SASLPassword
+		if opts.Kafka.SASLMechanism == "" {
+			saslConfig.Mechanism = "SCRAM-SHA-512"
+		} else {
+			saslConfig.Mechanism = opts.Kafka.SASLMechanism
+		}
+	} else {
+		saslConfig.EnableSASL = false
+	}
+
+	exporter.ConnectKafka(opts.Kafka.Host, opts.Kafka.Topic, sslConfig, saslConfig)
 	defer exporter.kafkaWriter.Close()
 
-	// daemon mode
 	log.Infof("starting http server on %s", opts.ServerBind)
 	startHttpServer(exporter)
 }
 
-// init argparser and parse/validate arguments
 func initArgparser() {
 	argparser = flags.NewParser(&opts, flags.Default)
 	_, err := argparser.Parse()
 
-	// check if there is an parse error
 	if err != nil {
 		if flagsErr, ok := err.(*flags.Error); ok && flagsErr.Type == flags.ErrHelp {
 			os.Exit(0)
@@ -69,12 +81,10 @@ func initArgparser() {
 		}
 	}
 
-	// verbose level
 	if opts.Logger.Verbose {
 		log.SetLevel(log.DebugLevel)
 	}
 
-	// debug level
 	if opts.Logger.Debug {
 		log.SetReportCaller(true)
 		log.SetLevel(log.TraceLevel)
@@ -87,7 +97,6 @@ func initArgparser() {
 		})
 	}
 
-	// json log format
 	if opts.Logger.LogJson {
 		log.SetReportCaller(true)
 		log.SetFormatter(&log.JSONFormatter{
@@ -101,9 +110,7 @@ func initArgparser() {
 	}
 }
 
-// start and handle prometheus handler
 func startHttpServer(exporter *AlertmanagerKafkaExporter) {
-	// healthz
 	http.HandleFunc("/healthz", func(w http.ResponseWriter, r *http.Request) {
 		if _, err := fmt.Fprint(w, "Ok"); err != nil {
 			log.Error(err)
@@ -113,3 +120,4 @@ func startHttpServer(exporter *AlertmanagerKafkaExporter) {
 	http.Handle("/metrics", promhttp.Handler())
 	log.Fatal(http.ListenAndServe(opts.ServerBind, nil))
 }
+

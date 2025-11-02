@@ -1,10 +1,8 @@
-PROJECT_NAME		:= alertmanager2kafka
+PROJECT_NAME			:= alertmanager2kafka
 DOCKER_ORG			:= genunix
-#GIT_TAG				:= $(shell git describe --dirty --tags --always)
 GIT_TAG				:= $(shell git describe --tags --always)
 GIT_COMMIT			:= $(shell git rev-parse --short HEAD)
 LDFLAGS				:= -X "main.gitTag=$(GIT_TAG)" -X "main.gitCommit=$(GIT_COMMIT)" -extldflags "-static"
-
 FIRST_GOPATH			:= $(firstword $(subst :, ,$(shell go env GOPATH)))
 GOLANGCI_LINT_BIN		:= $(FIRST_GOPATH)/bin/golangci-lint
 
@@ -42,11 +40,13 @@ test:
 	go test ./...
 
 .PHONY: lint
-lint: $(GOLANGCI_LINT_BIN)
-	$(GOLANGCI_LINT_BIN) run -E exportloopref,gofmt --timeout=10m
+lint:
+	@which golangci-lint > /dev/null || (echo "golangci-lint not found. Run 'make dependencies' first." && exit 1)
+	golangci-lint run -E exportloopref,gofmt --timeout=10m
 
 .PHONY: dependencies
 dependencies: $(GOLANGCI_LINT_BIN)
 
 $(GOLANGCI_LINT_BIN):
 	curl -sfL https://install.goreleaser.com/github.com/golangci/golangci-lint.sh | sh -s -- -b $(FIRST_GOPATH)/bin v1.32.2
+

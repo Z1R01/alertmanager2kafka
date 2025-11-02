@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"github.com/prometheus/client_golang/prometheus"
 	kafka "github.com/segmentio/kafka-go"
+	"github.com/segmentio/kafka-go/sasl/scram"
+	"github.com/segmentio/kafka-go/sasl/plain"
 	log "github.com/sirupsen/logrus"
 	"io/ioutil"
 	"net/http"
@@ -36,6 +38,13 @@ type (
 		CACertFile string
 	}
 
+	KafkaSASLConfig struct {
+		EnableSASL bool
+		Username   string
+		Password   string
+		Mechanism  string
+	}
+
 	AlertmanagerEntry struct {
 		Alerts []struct {
 			Annotations  map[string]string `json:"annotations"`
@@ -53,8 +62,6 @@ type (
 		Status            string            `json:"status"`
 		Version           string            `json:"version"`
 		GroupKey          string            `json:"groupKey"`
-
-		// Timestamp records when the alert notification was received
 		Timestamp string `json:"@timestamp"`
 	}
 )
@@ -88,8 +95,12 @@ func (e *AlertmanagerKafkaExporter) Init() {
 	prometheus.MustRegister(e.prometheus.alertsSuccessful)
 }
 
-func (e *AlertmanagerKafkaExporter) ConnectKafka(host string, topic string, sslConfig *KafkaSSLConfig) {
-	dialer := kafka.DefaultDialer
+func (e *AlertmanagerKafkaExporter) ConnectKafka(host string, topic string, sslConfig *KafkaSSLConfig, saslConfig *KafkaSASLConfig) {
+	dialer := &kafka.Dialer{
+		Timeout:       10 * time.Second,
+		DualStack:     true,
+	}
+
 	if sslConfig.EnableSSL {
 		cert, err := tls.LoadX509KeyPair(sslConfig.CertFile, sslConfig.KeyFile)
 		if err != nil {
@@ -116,10 +127,50 @@ func (e *AlertmanagerKafkaExporter) ConnectKafka(host string, topic string, sslC
 			RootCAs:      caCertPool,
 		}
 	}
+
+	if saslConfig.EnableSASL {
+		var err error
+		switch strings.ToUpper(saslConfig.Mechanism) {
+		case "SCRAM-SHA-512":
+			dialer.SASLMechanism, err = scram.Mechanism(scram.SHA512, saslConfig.Username, saslConfig.Password)
+			if err != nil {
+				log.Fatalf("cannot create SCRAM-SHA-512 mechanism: %s", err)
+			}
+			log.Infof("configured SASL authentication: mechanism=SCRAM-SHA-512, username=%s", saslConfig.Username)
+		case "SCRAM-SHA-256":
+			dialer.SASLMechanism, err = scram.Mechanism(scram.SHA256, saslConfig.Username, saslConfig.Password)
+			if err != nil {
+				log.Fatalf("cannot create SCRAM-SHA-256 mechanism: %s", err)
+			}
+			log.Infof("configured SASL authentication: mechanism=SCRAM-SHA-256, username=%s", saslConfig.Username)
+		case "PLAIN":
+			dialer.SASLMechanism = plain.Mechanism{
+				Username: saslConfig.Username,
+				Password: saslConfig.Password,
+			}
+			log.Infof("configured SASL authentication: mechanism=PLAIN, username=%s", saslConfig.Username)
+		default:
+			log.Fatalf("unsupported SASL mechanism: %s (supported: PLAIN, SCRAM-SHA-256, SCRAM-SHA-512)", saslConfig.Mechanism)
+		}
+
+		if sslConfig.EnableSSL {
+			brokers := strings.Split(host, ",")
+			for _, broker := range brokers {
+				conn, err := dialer.DialContext(context.Background(), "tcp", broker)
+				if err != nil {
+					log.Fatalf("cannot connect to kafka broker %s with SASL/TLS: %s", broker, err)
+				}
+				conn.Close()
+				log.Debugf("successfully connected to kafka broker %s with SASL/TLS", broker)
+			}
+		}
+	}
+
 	e.kafkaWriter = kafka.NewWriter(kafka.WriterConfig{
-		Brokers: strings.Split(host, ","),
-		Topic:   topic,
-		Dialer:  dialer,
+		Brokers:  strings.Split(host, ","),
+		Topic:    topic,
+		Dialer:   dialer,
+		Balancer: &kafka.LeastBytes{},
 	})
 }
 
@@ -181,3 +232,4 @@ func (e *AlertmanagerKafkaExporter) HttpHandler(w http.ResponseWriter, r *http.R
 	log.Debugf("received and stored alert: %v", msg.CommonLabels)
 	e.prometheus.alertsSuccessful.WithLabelValues().Inc()
 }
+

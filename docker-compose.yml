@@ -1,0 +1,30 @@
+services:
+  alertmanager2kafka:
+    image: alertmanager2kafka:latest
+    container_name: alertmanager2kafka
+    hostname: alertmanager2kafka
+    ports:
+      - "9097:9097"
+    environment:
+      DEBUG: "true"
+      VERBOSE: "true"
+      LOG_JSON: "true"
+      KAFKA_HOST: "kafka:9092"
+      KAFKA_TOPIC: "alertmanager2kafka"
+      KAFKA_TLS_ENABLE: "true"
+      KAFKA_TLS_CERT: "/certs/server.crt"
+      KAFKA_TLS_KEY: "/certs/server.key"
+      KAFKA_TLS_CA: "/certs/ca.crt"
+      KAFKA_SASL_MECHANISM: "SCRAM-SHA-512"
+      KAFKA_SASL_USERNAME: "username"
+      KAFKA_SASL_PASSWORD: "password"
+    volumes:
+      - /certs:/certs:ro
+    restart: always
+    networks:
+      - net
+
+networks:
+  net:
+    external: true
+    name: net
